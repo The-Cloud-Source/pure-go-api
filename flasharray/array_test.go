@@ -260,7 +260,7 @@ func TestGetArraySpace(t *testing.T) {
 		}
 	})
 
-	_, err := c.Array.GetArraySpace(nil)
+	_, err := c.Array.GetArraySpace()
 	ok(t, err)
 }
 
@@ -280,7 +280,7 @@ func TestGetArraySpaceError(t *testing.T) {
 		}
 	})
 
-	_, err := c.Array.GetArraySpace(nil)
+	_, err := c.Array.GetArraySpace()
 	if err == nil {
 		t.Errorf("error not raised on 500 response")
 	}

@@ -28,6 +28,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"net/http/cookiejar"
@@ -39,6 +40,11 @@ import (
 // supportedRestVersions is used to negotiate the API version to use
 var supportedRestVersions = [...]string{"1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "1.10", "1.11", "1.12", "1.13", "1.14", "1.15", "1.16"}
 
+type HttpClient interface {
+	Do(req *http.Request) (*http.Response, error)
+	Post(url, contentType string, body io.Reader) (resp *http.Response, err error)
+}
+
 // Client struct represents a Pure Storage FlashArray and exposes administrative APIs.
 type Client struct {
 	Target        string
@@ -49,7 +55,7 @@ type Client struct {
 	UserAgent     string
 	RequestKwargs map[string]string
 
-	client *http.Client
+	client HttpClient
 
 	Array            *ArrayService
 	Volumes          *VolumeService
@@ -297,7 +303,7 @@ func (c *Client) Do(req *http.Request, v interface{}, reestablishSession bool) (
 	}
 	defer resp.Body.Close()
 
-	if err := validateResponse(resp); err != nil {
+	if err := c.validateResponse(req, resp, false); err != nil {
 		return resp, err
 	}
 
@@ -322,14 +328,24 @@ func decodeResponse(r *http.Response, v interface{}) error {
 // Some functionality needs to be added here to check for some specific errors,
 // and probably add the equivlents to PureError and PureHTTPError from the Python
 // REST client.
-func validateResponse(r *http.Response) error {
-	if c := r.StatusCode; 200 <= c && c <= 299 {
+func (c *Client) validateResponse(req *http.Request, resp *http.Response, retried bool) error {
+	if code := resp.StatusCode; 200 <= code && code <= 299 {
 		return nil
 	}
 
-	bodyBytes, _ := ioutil.ReadAll(r.Body)
+	if code := resp.StatusCode; code == http.StatusUnauthorized && !retried { //Token Expired
+		resp.Body.Close()
+		err := c.login()
+		if err != nil {
+			return fmt.Errorf("unable to login pureClient on token expired err=%s", err.Error())
+		}
+		resp, err = c.client.Do(req)
+		return c.validateResponse(req, resp, true)
+	}
+
+	bodyBytes, _ := ioutil.ReadAll(resp.Body)
 	bodyString := string(bodyBytes)
-	return fmt.Errorf("Response code: %d, Response Body: %s", r.StatusCode, bodyString)
+	return fmt.Errorf("Response code: %d, Response Body: %s", resp.StatusCode, bodyString)
 }
 
 // checkRestVersion will check that the specified rest_version is supported

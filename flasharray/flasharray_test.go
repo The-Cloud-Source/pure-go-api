@@ -18,11 +18,14 @@ package flasharray
 
 import (
 	"fmt"
+	"io"
+	"io/ioutil"
 	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -296,4 +299,53 @@ func equals(tb testing.TB, exp, act interface{}) {
 		fmt.Printf("\033[31m%s:%d:\n\n\texp: %#v\n\n\tgot: %#v\033[39m\n\n", filepath.Base(file), line, exp, act)
 		tb.FailNow()
 	}
+}
+
+type MockHttpClient struct {
+	DoFunc     func(req *http.Request) (*http.Response, error)
+	DoPostFunc func(url, contentType string, body io.Reader) (resp *http.Response, err error)
+}
+
+func (m *MockHttpClient) Do(req *http.Request) (*http.Response, error) {
+	return m.DoFunc(req)
+}
+
+func (m *MockHttpClient) Post(url, contentType string, body io.Reader) (resp *http.Response, err error) {
+	return m.DoPostFunc(url, contentType, body)
+}
+
+func TestRefreshTokenOnValidateResponse(t *testing.T) {
+	retriedLogin := false
+	retriedReq := false
+
+	mock := &MockHttpClient{}
+	mock.DoPostFunc = func(url, contentType string, body io.Reader) (resp *http.Response, err error) { // for the
+		retriedLogin = true
+		return nil, nil
+	}
+	mock.DoFunc = func(req *http.Request) (response *http.Response, e error) { //second request
+		retriedReq = true
+		resp := &http.Response{
+			StatusCode: http.StatusOK,
+		}
+		return resp, nil
+	}
+
+	c := &Client{
+		client:   mock,
+		APIToken: "dummy",
+	}
+
+	req := &http.Request{}
+	resp := &http.Response{
+		StatusCode: http.StatusUnauthorized,
+		Body:       ioutil.NopCloser(strings.NewReader("Token Expired")),
+	}
+
+	err := c.validateResponse(req, resp, false)
+
+	ok(t, err)
+	assert(t, retriedLogin, "Login wasn't retried")
+	assert(t, retriedReq, "Request wasn't retried")
+
 }
